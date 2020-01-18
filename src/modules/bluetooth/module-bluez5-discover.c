@@ -42,6 +42,7 @@ PA_MODULE_USAGE(
 
 static const char* const valid_modargs[] = {
     "headset",
+    "buff_mult",
     "autodetect_mtu",
     "a2dp_config",
     NULL
@@ -54,6 +55,7 @@ struct userdata {
     pa_hook_slot *device_connection_changed_slot;
     pa_bluetooth_discovery *discovery;
     bool autodetect_mtu;
+    uint8_t buff_mult;
     const char *a2dp_config;
 };
 
@@ -75,8 +77,8 @@ static pa_hook_result_t device_connection_changed_cb(pa_bluetooth_discovery *y, 
     if (!module_loaded && pa_bluetooth_device_any_transport_connected(d)) {
         /* a new device has been connected */
         pa_module *m;
-        char *args = pa_sprintf_malloc("path=%s autodetect_mtu=%i a2dp_config=\"%s\"",
-                                       d->path, (int) u->autodetect_mtu, u->a2dp_config);
+        char *args = pa_sprintf_malloc("path=%s buff_mult=%i autodetect_mtu=%i a2dp_config=\"%s\"",
+                                       d->path, u->buff_mult, (int) u->autodetect_mtu, u->a2dp_config);
 
         pa_log_debug("Loading module-bluez5-device %s", args);
         pa_module_load(&m, u->module->core, "module-bluez5-device", args);
@@ -101,11 +103,14 @@ const char *default_headset_backend = "auto";
 const char *default_headset_backend = "ofono";
 #endif
 
+const char *default_buff_mult = "2";
+
 int pa__init(pa_module *m) {
     struct userdata *u;
     pa_modargs *ma;
-    const char *headset_str, *a2dp_config;
+    const char *headset_str, *buff_mult_str, *a2dp_config;
     int headset_backend;
+    int buff_mult;
     bool autodetect_mtu;
 
     pa_assert(m);
@@ -127,6 +132,13 @@ int pa__init(pa_module *m) {
         goto fail;
     }
 
+    pa_assert_se(buff_mult_str = pa_modargs_get_value(ma, "buff_mult", default_buff_mult));
+    buff_mult = (int) atoi(buff_mult_str);
+    if (buff_mult < 1 || buff_mult > 255) {
+        pa_log("buff_mult parameter must be > 0 and < 256");
+        goto fail;
+    }
+
     autodetect_mtu = false;
     if (pa_modargs_get_value_boolean(ma, "autodetect_mtu", &autodetect_mtu) < 0) {
         pa_log("Invalid boolean value for autodetect_mtu parameter");
@@ -140,6 +152,7 @@ int pa__init(pa_module *m) {
     u->module = m;
     u->core = m->core;
     u->autodetect_mtu = autodetect_mtu;
+    u->buff_mult = (uint8_t) buff_mult;
     u->a2dp_config = pa_xmemdup(a2dp_config, strlen(a2dp_config) + 1);
     u->loaded_device_paths = pa_hashmap_new(pa_idxset_string_hash_func, pa_idxset_string_compare_func);
 

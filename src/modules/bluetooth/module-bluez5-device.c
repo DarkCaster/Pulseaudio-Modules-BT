@@ -69,6 +69,7 @@ PA_MODULE_USAGE("path=<device object path>"
 
 static const char* const valid_modargs[] = {
     "path",
+    "buff_mult",
     "autodetect_mtu",
     "a2dp_config",
     NULL
@@ -151,6 +152,7 @@ struct userdata {
     pa_memchunk write_memchunk;
     pa_sample_spec sample_spec;
     pa_a2dp_info_t a2dp_info;
+    uint8_t buff_mult;
 };
 
 typedef enum pa_bluetooth_form_factor {
@@ -619,7 +621,7 @@ static void update_buffer_size(struct userdata *u) {
         if (u->transport->a2dp_source && u->transport->a2dp_source->handle_update_buffer_size)
             new_bufsize = (int) u->transport->a2dp_source->handle_update_buffer_size(&u->a2dp_info.a2dp_source_data);
         else
-            new_bufsize = (int) (2 * u->write_block_size);
+            new_bufsize = (int) (u->buff_mult * u->write_block_size);
         if (new_bufsize < 1024)
             new_bufsize = (int) ((1024 / u->write_block_size + 1) * u->write_block_size);
 
@@ -2377,9 +2379,12 @@ static int device_process_msg(pa_msgobject *obj, int code, void *data, int64_t o
     return 0;
 }
 
+const char *default_buff_mult = "2";
+
 int pa__init(pa_module* m) {
     struct userdata *u;
-    const char *path;
+    const char *path, *buff_mult_str;
+    int buff_mult;
     pa_modargs *ma;
     bool autodetect_mtu;
 
@@ -2398,6 +2403,14 @@ int pa__init(pa_module* m) {
         pa_log_error("Failed to get device path from module arguments");
         goto fail_free_modargs;
     }
+
+    pa_assert_se(buff_mult_str = pa_modargs_get_value(ma, "buff_mult", default_buff_mult));
+    buff_mult = (int) atoi(buff_mult_str);
+    if (buff_mult < 1 || buff_mult > 255) {
+        pa_log("buff_mult parameter must be > 0 and < 256");
+        goto fail;
+    }
+    u->buff_mult=(uint8_t) buff_mult;
 
     if ((u->discovery = pa_shared_get(u->core, "bluetooth-discovery")))
         pa_bluetooth_discovery_ref(u->discovery);
