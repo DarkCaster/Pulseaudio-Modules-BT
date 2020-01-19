@@ -603,36 +603,56 @@ static int a2dp_process_push(struct userdata *u) {
 }
 
 static void update_buffer_size(struct userdata *u) {
-    int old_bufsize;
+    int old_snd_bufsize, old_rcv_bufsize;
     socklen_t len = sizeof(int);
-    int ret;
 
-    ret = getsockopt(u->stream_fd, SOL_SOCKET, SO_SNDBUF, &old_bufsize, &len);
-    if (ret == -1) {
+    if (getsockopt(u->stream_fd, SOL_SOCKET, SO_SNDBUF, &old_snd_bufsize, &len) == -1)
         pa_log_warn("Changing bluetooth buffer size: Failed to getsockopt(SO_SNDBUF): %s", pa_cstrerror(errno));
-    } else {
-        int new_bufsize;
+    else if (getsockopt(u->stream_fd, SOL_SOCKET, SO_RCVBUF, &old_rcv_bufsize, &len) == -1)
+        pa_log_warn("Changing bluetooth buffer size: Failed to getsockopt(SO_RCVBUF): %s", pa_cstrerror(errno));
+    else {
+        int new_bufsize, v_bufsize, skip_recv_buff = 0;
 
         /* Set send buffer size as small as possible. The minimum value is 1024 according to the
          * socket man page. The data is written to the socket in chunks of write_block_size, so
          * there should at least be room for two chunks in the buffer. Generally, write_block_size
          * is larger than 512. If not, use the next multiple of write_block_size which is larger
          * than 1024. */
-        if (u->transport->a2dp_source && u->transport->a2dp_source->handle_update_buffer_size)
+        if (u->transport->a2dp_source && u->transport->a2dp_source->handle_update_buffer_size) {
             new_bufsize = (int) u->transport->a2dp_source->handle_update_buffer_size(&u->a2dp_info.a2dp_source_data);
-        else
+            skip_recv_buff = 1;
+        } else {
+            pa_log_info("Current write_block_size: %d", (int)(u->write_block_size));
             new_bufsize = (int) (u->buff_mult * u->write_block_size);
+        }
         if (new_bufsize < 1024)
             new_bufsize = (int) ((1024 / u->write_block_size + 1) * u->write_block_size);
 
         /* The kernel internally doubles the buffer size that was set by setsockopt and getsockopt
          * returns the doubled value. */
-        if (new_bufsize != old_bufsize / 2) {
-            ret = setsockopt(u->stream_fd, SOL_SOCKET, SO_SNDBUF, &new_bufsize, len);
-            if (ret == -1)
-                pa_log_warn("Changing bluetooth buffer size: Failed to change from %d to %d: %s", old_bufsize / 2, new_bufsize, pa_cstrerror(errno));
-            else
-                pa_log_info("Changing bluetooth buffer size: Changed from %d to %d", old_bufsize / 2, new_bufsize);
+        if (new_bufsize != old_snd_bufsize / 2) {
+            if (setsockopt(u->stream_fd, SOL_SOCKET, SO_SNDBUF, &new_bufsize, len) == -1)
+                pa_log_warn("Changing bluetooth send-buffer size: failed to change from %d to %d: %s", old_snd_bufsize / 2, new_bufsize, pa_cstrerror(errno));
+            else {
+                getsockopt(u->stream_fd, SOL_SOCKET, SO_SNDBUF, &v_bufsize, &len);
+                pa_log_info("Changing bluetooth send-buffer size: changed from %d to %d (requested); %d(actual)", old_snd_bufsize / 2, new_bufsize, v_bufsize / 2);
+            }
+        }
+
+        if(!skip_recv_buff) {
+            pa_log_info("Current read_block_size: %d", (int)(u->read_block_size));
+            new_bufsize = (int) (u->buff_mult * u->read_block_size);
+            if (new_bufsize < 1024)
+                new_bufsize = (int) ((1024 / u->read_block_size + 1) * u->read_block_size);
+
+            if (new_bufsize != old_rcv_bufsize / 2) {
+                if (setsockopt(u->stream_fd, SOL_SOCKET, SO_RCVBUF, &new_bufsize, len) == -1)
+                    pa_log_warn("Changing bluetooth recv-buffer size: failed to change from %d to %d: %s", old_rcv_bufsize / 2, new_bufsize, pa_cstrerror(errno));
+                else {
+                    getsockopt(u->stream_fd, SOL_SOCKET, SO_RCVBUF, &v_bufsize, &len);
+                    pa_log_info("Changing bluetooth recv-buffer size: changed from %d to %d (requested); %d(actual)", old_rcv_bufsize / 2, new_bufsize, v_bufsize / 2);
+                }
+            }
         }
     }
 }
